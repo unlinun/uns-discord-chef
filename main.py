@@ -1,7 +1,8 @@
 import os
 import discord
 from discord import app_commands
-import google.generativeai as genai
+# 這裡改用全新的 Google GenAI SDK
+from genai import Client, types 
 from dotenv import load_dotenv
 
 # 1. 初始化與設定
@@ -9,11 +10,12 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_KEY = os.getenv('GEMINI_API_KEY')
 
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# 初始化新版 Gemini 2.0 客戶端
+client = Client(api_key=GEMINI_KEY)
 
 class ChefBot(discord.Client):
     def __init__(self):
+        # 這裡照舊
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
@@ -23,7 +25,7 @@ class ChefBot(discord.Client):
 
 bot = ChefBot()
 
-# 2. 定義 Spec 中的選項 (Choices)
+# 2. 定義 Spec 中的選項 (不變)
 COOKING_STYLES = [
     app_commands.Choice(name="中式", value="中式"),
     app_commands.Choice(name="日式", value="日式"),
@@ -58,13 +60,12 @@ async def cook(
     method: app_commands.Choice[str] = None,
     dietary: str = "無"
 ):
-    # 防止超時
     await interaction.response.defer()
 
     selected_style = style.value if style else "不拘"
     selected_method = method.value if method else "不拘"
 
-    # 4. 建立 Prompt (告訴 Gemini 如何根據 Spec 運作)
+    # 4. 建立 Prompt (保留原始 Spec)
     prompt = f"""
     你是一位專業的五星級大廚『冰箱救星』。
     請根據以下條件設計一份食譜：
@@ -90,17 +91,26 @@ async def cook(
     """
 
     try:
-        response = model.generate_content(prompt)
+        # 5. 換成您要求的新版 Gemini 2.0 呼叫方式 (含 Google Search)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.7
+            )
+        )
+        
         recipe_text = response.text
 
-        # 5. 使用 Embed 美化輸出
+        # 6. 使用 Embed 美化輸出
         embed = discord.Embed(
-            title="👨‍🍳 冰箱大廚：今日特選菜單",
+            title="👨‍🍳 冰箱大廚：今日特選菜單 (Gemini 2.0)",
             description=f"針對您的食材：**{ingredients}** 所設計",
             color=discord.Color.green()
         )
         embed.add_field(name="料理指南", value=recipe_text, inline=False)
-        embed.set_footer(text="祝您用餐愉快！本食譜由 Gemini AI 生成")
+        embed.set_footer(text="本食譜由 Gemini 2.0 Flash 與 Google Search 技術支援")
 
         await interaction.followup.send(embed=embed)
 
@@ -108,5 +118,5 @@ async def cook(
         await interaction.followup.send(f"❌ 廚房出狀況了：{str(e)}")
 
 if __name__ == "__main__":
-    print("🚀 冰箱大廚正在準備開張...")
+    print("🚀 冰箱大廚正在準備開張 (Gemini 2.0 版)...")
     bot.run(DISCORD_TOKEN)
