@@ -4,14 +4,12 @@ from discord import app_commands
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# 1. 載入環境變數
+# 1. 初始化與設定
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_KEY = os.getenv('GEMINI_API_KEY')
 
-# 2. 設定 Gemini
 genai.configure(api_key=GEMINI_KEY)
-# 初始化模型 (使用 gemini-1.5-flash，速度快且免費額度充足)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 class ChefBot(discord.Client):
@@ -25,36 +23,90 @@ class ChefBot(discord.Client):
 
 bot = ChefBot()
 
-@bot.event
-async def on_ready():
-    print(f'✅ 機器人已上線：{bot.user}')
+# 2. 定義 Spec 中的選項 (Choices)
+COOKING_STYLES = [
+    app_commands.Choice(name="中式", value="中式"),
+    app_commands.Choice(name="日式", value="日式"),
+    app_commands.Choice(name="韓式", value="韓式"),
+    app_commands.Choice(name="泰式", value="泰式"),
+    app_commands.Choice(name="西式", value="西式")
+]
 
-# 3. 定義指令 /cook
-@bot.tree.command(name="cook", description="給食材，Gemini 大廚給您食譜")
-@app_commands.describe(ingredients="例如：雞胸肉, 蔥, 蛋", style="中式、泰式...", method="炒、蒸...")
-async def cook(interaction: discord.Interaction, ingredients: str, style: str = "不拘", method: str = "不拘"):
-    
-    # 告訴 Discord 正在處理中，避免 3 秒超時
+COOKING_METHODS = [
+    app_commands.Choice(name="蒸", value="蒸"),
+    app_commands.Choice(name="炸", value="炸"),
+    app_commands.Choice(name="炒", value="炒"),
+    app_commands.Choice(name="烤", value="烤"),
+    app_commands.Choice(name="煮/燉", value="煮/燉"),
+    app_commands.Choice(name="涼拌", value="涼拌"),
+    app_commands.Choice(name="氣炸", value="氣炸")
+]
+
+# 3. 斜線指令實作
+@bot.tree.command(name="cook", description="冰箱大廚根據食材與風格為您上菜")
+@app_commands.describe(
+    ingredients="請輸入現有食材（例如：牛肉, 洋蔥）",
+    style="想要的料理風格",
+    method="偏好的烹飪方式",
+    dietary="是否有忌口或過敏（例如：不吃辣）"
+)
+@app_commands.choices(style=COOKING_STYLES, method=COOKING_METHODS)
+async def cook(
+    interaction: discord.Interaction, 
+    ingredients: str, 
+    style: app_commands.Choice[str] = None,
+    method: app_commands.Choice[str] = None,
+    dietary: str = "無"
+):
+    # 防止超時
     await interaction.response.defer()
 
-    # 組合給 Gemini 的提示詞 (Prompt)
-    prompt = (
-        f"你是一位親切的五星級主廚。請根據以下條件提供食譜：\n"
-        f"- 食材：{ingredients}\n"
-        f"- 料理風格：{style}\n"
-        f"- 烹飪方式：{method}\n"
-        f"輸出的內容應包含：菜名、預估時間、難易度、食材清單、詳細步驟。"
-    )
+    selected_style = style.value if style else "不拘"
+    selected_method = method.value if method else "不拘"
+
+    # 4. 建立 Prompt (告訴 Gemini 如何根據 Spec 運作)
+    prompt = f"""
+    你是一位專業的五星級大廚『冰箱救星』。
+    請根據以下條件設計一份食譜：
+    - 食材：{ingredients}
+    - 料理風格：{selected_style}
+    - 烹飪方式：{selected_method}
+    - 忌口限制：{dietary}
+
+    請嚴格遵守以下輸出格式：
+    # [菜名]
+    ⏱ 烹飪時間：[時間]
+    📊 難易度：[簡單/中等/大廚挑戰]
+    📍 料理方式：{selected_method}
+    
+    ## 🛒 食材清單
+    [列出食材]
+    
+    ## 👨‍🍳 料理步驟
+    1. [步驟 1]
+    2. [步驟 2]...
+    
+    💡 主廚悄悄話：[提供一個專業小技巧]
+    """
 
     try:
-        # 4. 呼叫 Gemini API
         response = model.generate_content(prompt)
-        recipe = response.text
-        
-        # 回傳結果
-        await interaction.followup.send(f"👨‍🍳 **Gemini 主廚為您推薦：**\n\n{recipe}")
-        
-    except Exception as e:
-        await interaction.followup.send(f"❌ 廚房出錯了：{str(e)}")
+        recipe_text = response.text
 
-bot.run(DISCORD_TOKEN)
+        # 5. 使用 Embed 美化輸出
+        embed = discord.Embed(
+            title="👨‍🍳 冰箱大廚：今日特選菜單",
+            description=f"針對您的食材：**{ingredients}** 所設計",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="料理指南", value=recipe_text, inline=False)
+        embed.set_footer(text="祝您用餐愉快！本食譜由 Gemini AI 生成")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ 廚房出狀況了：{str(e)}")
+
+if __name__ == "__main__":
+    print("🚀 冰箱大廚正在準備開張...")
+    bot.run(DISCORD_TOKEN)
