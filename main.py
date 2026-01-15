@@ -4,8 +4,24 @@ from discord import app_commands
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from flask import Flask        # 用於建立虛擬網頁
+import threading              # 用於同時執行網頁與機器人
 
-# 1. 載入環境變數與初始化
+# --- 1. 建立虛擬 Web Server 騙過 Render 的 Port 檢查 ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    # 當 Render 訪問網址時回傳此內容
+    return "Chef Bot is alive and cooking!"
+
+def run_web():
+    # Render 會自動分配一個 PORT 環境變數給 Web Service
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+# ---------------------------------------------------
+
+# 2. 載入環境變數與初始化
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_KEY = os.getenv('GEMINI_API_KEY')
@@ -26,7 +42,7 @@ class ChefBot(discord.Client):
 
 bot = ChefBot()
 
-# 2. 定義 Spec 中的選單選項 (Choices)
+# 3. 定義 Spec 中的選單選項 (Choices)
 COOKING_STYLES = [
     app_commands.Choice(name="中式", value="中式"),
     app_commands.Choice(name="日式", value="日式"),
@@ -45,7 +61,7 @@ COOKING_METHODS = [
     app_commands.Choice(name="氣炸", value="氣炸")
 ]
 
-# 3. 斜線指令實作 /cook
+# 4. 斜線指令實作 /cook
 @bot.tree.command(name="cook", description="冰箱大廚：Gemini 2.0 聯網為您量身打造食譜")
 @app_commands.describe(
     ingredients="請輸入現有食材（例如：雞胸肉, 洋蔥）",
@@ -67,7 +83,7 @@ async def cook(
     selected_style = style.value if style else "不拘"
     selected_method = method.value if method else "不拘"
 
-    # 4. 建立 Prompt (告訴 AI 應遵守的格式)
+    # 5. 建立 Prompt
     prompt = f"""
     你是一位專業的五星級大廚『冰箱救星』。
     請根據以下條件設計一份食譜：
@@ -93,7 +109,7 @@ async def cook(
     """
 
     try:
-        # 5. 呼叫 Gemini 2.0 Flash API (包含 Google Search 搜尋工具)
+        # 6. 呼叫 Gemini 2.0 Flash API (包含 Google Search 搜尋工具)
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp",
             contents=prompt,
@@ -105,26 +121,21 @@ async def cook(
         
         recipe_text = response.text
 
-        # 6. 使用 Embed 美化 Discord 輸出
+        # 7. 使用 Embed 美化 Discord 輸出
         embed = discord.Embed(
             title="👨‍🍳 冰箱大廚：今日特選菜單 (Gemini 2.0 版)",
             description=f"針對您的食材：**{ingredients}** 所設計",
             color=discord.Color.green()
         )
-        # 如果內容太長，Discord Embed 有字數限制，這裡直接放入內容
         embed.add_field(name="料理指南", value=recipe_text[:1024], inline=False)
         
-        # 如果內容超過 1024 字，分段處理 (保險做法)
         if len(recipe_text) > 1024:
             embed.add_field(name="料理指南 (續)", value=recipe_text[1024:2048], inline=False)
 
         embed.set_footer(text="本食譜結合 Gemini 2.0 Flash 與 Google Search 實時搜尋技術")
-
-        # 發送結果
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        # 錯誤回報
         print(f"Error: {e}")
         await interaction.followup.send(f"❌ 廚房出狀況了：{str(e)}")
 
@@ -134,4 +145,9 @@ async def on_ready():
     print(f"🚀 正在使用 Gemini 2.0 聯網引擎...")
 
 if __name__ == "__main__":
+    # --- 關鍵：啟動 Web Server 線程 ---
+    # 使用 daemon=True 確保主程式結束時網頁服務也會跟著結束
+    threading.Thread(target=run_web, daemon=True).start()
+    
+    # 啟動 Discord 機器人
     bot.run(DISCORD_TOKEN)
